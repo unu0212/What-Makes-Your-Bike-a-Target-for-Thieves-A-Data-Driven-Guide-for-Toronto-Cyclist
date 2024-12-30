@@ -1,0 +1,437 @@
+---
+title: "What Makes Your Bike a Target for Thieves: A Data-Driven Guide for Toronto
+  Cyclists"
+author: "Unurjargal Batsuuri"
+output:
+  html_document: default
+  pdf_document: default
+---
+<style>
+p {
+  font-family: 'Times New Roman';
+  line-height: 1.5;
+}
+h1 {
+  font-size: 24px;
+  font-weight: bold;
+  text-align: center;
+}
+
+h2 {
+  color: darkgreen;
+  font-size: 23px;
+  font-weight: bold;
+}
+.author {
+  text-align: center;
+  font-family: 'Times New Roman', serif;
+  font-size: 16px;
+  color: #333333;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, include=TRUE, eval=TRUE, message = FALSE, 
+                      warning = FALSE)
+required_packages <- c(
+  "lubridate", "sf", "tidyverse", "ggthemes", "rnaturalearth", "tmap", 
+  "ggiraph", "plotly", "shiny", "RColorBrewer", "lubridate"
+  # include any packages to be installed here
+) 
+for (p in required_packages) { # install if missing
+  if (!require(p, character.only = TRUE)) {
+    install.packages(p, character.only = TRUE)
+  }
+}
+library(tidyverse)
+library(sf)
+library(ggthemes)
+library(rnaturalearth)
+library(tmap)
+library(ggiraph)
+library(plotly)
+library(RColorBrewer)
+library(lubridate)
+library(htmlwidgets)
+# you are welcome to use either the CSV file or the GeoJSON file
+# GeoJSON format maybe useful if you would like to combine
+# an external geospatial dataset
+bike_thefts_csv <- read_csv("data/Bicycle_Thefts_Open_Data.csv") |>
+  mutate(
+    occurence_date = as_date(
+      OCC_DATE, format = "%a, %d %b %Y %H:%M:%S GMT"
+    ),
+    report_date = as_date(
+      REPORT_DATE, format = "%a, %d %b %Y %H:%M:%S GMT"
+    )
+  )
+bike_thefts_sf <- read_sf("data/Bicycle_Thefts_Open_Data.geojson") |>
+  mutate(
+    occurence_date = as_date(
+      OCC_DATE, format = "%a, %d %b %Y %H:%M:%S GMT"
+    ),
+    report_date = as_date(
+      REPORT_DATE, format = "%a, %d %b %Y %H:%M:%S GMT"
+    )
+  )
+#The 158 neighbourhoods of Toronto dataset used for the outline of the 
+#neighbourhoods
+neighbourhoods_sf <- read_sf('data/Neighbourhoods - 4326.shp')
+
+```
+
+
+Bicycle theft is a major concern in Toronto, affecting thousands of cyclists each year. With over 36,000 reported bike thefts between 2014 and mid-2024, it’s clear that this issue has a significant impact on Toronto's cycling community. By analyzing data from the Toronto Police Service’s Public Safety Data Portal, we aim to uncover patterns in these incidents, shedding light on which attributes may make a bike more *"stealable"*. This article seeks to inform the cycling community about risks and trends, helping them make safer decisions about bike ownership and security, and raising broader awareness of the scale of this issue.
+
+
+## Bicycle Theft Trends Over Time
+
+**Figure 1: Yearly Trends in Bike Theft (2014-2024)**
+```{r}
+
+bike_thefts_y_occ<- bike_thefts_csv %>%
+  group_by(REPORT_YEAR) %>%
+  summarize(count = n()) %>%
+  ungroup()
+
+year_range <- seq(min(bike_thefts_y_occ$REPORT_YEAR), max(bike_thefts_y_occ$REPORT_YEAR))
+
+p <- ggplot(bike_thefts_y_occ, aes(x = REPORT_YEAR, y = count)) +
+  geom_line(color = "blue", size = 1) +  # Line showing the trend
+  geom_point(color = "darkblue", size = 2) +  # Points for each year
+  labs(
+   # title = "Figure 1: Yearly Trends in Bike Theft (2014-2024)",
+    x = "Year",
+    y = "Number of Thefts", 
+    caption = "Data Source: Toronto Police Service Bicycle Thefts Open Data"
+  ) +
+  theme_minimal() +
+  theme( plot.title = element_text(hjust = 0.5))
+
+interactive_plot <- ggplotly(p, tooltip = c("x", "y")) %>%
+  layout(hoverlabel=list(bgcolor="white"), 
+         width = 600, height = 400)
+
+interactive_plot
+```
+<span style="font-size:13px; color: grey;">Data Spans from April 2014 to May 2024. Data Source: Toronto Police Service Bicycle Thefts Open Data. </span>
+\n
+
+Every year, countless Toronto cyclists face the frustration and financial burden of having their bikes stolen. Understanding the overall trend of bike thefts can offer valuable insights into the prevalence and potential reasons behind fluctuations in theft rates. Figure 1 answers the question: “How have bike thefts in Toronto changed over the past decade?”
+
+We see a notable rise in bike thefts beginning in 2014, peaking around 2019 with over 4,000 reported incidents. This increase may be attributed to the growing popularity of cycling in Toronto as more people adopted bicycles for commuting and recreation. However, after 2019, bike thefts show a significant decline, with a particularly sharp drop around 2020 and beyond. This sudden decrease in thefts aligns with the COVID-19 pandemic and its related lockdowns. During this period, fewer people were commuting, and movement restrictions meant that many bikes were less exposed in public spaces. The decline continued in the following years, which may reflect a lasting shift in cyclist behavior, as well as an ongoing impact from remote work trends that reduced daily commutes and the demand for outdoor activities.
+
+
+## Seasonal Patterns in Bike Theft
+
+**Figure 2: Monthly Patterns in Bike Theft**
+```{r}
+############################ Calendar Heatmap MONTHS + YEAR ##################
+bike_thefts_month_y_occ<- bike_thefts_csv %>%
+  group_by(OCC_MONTH, OCC_YEAR) %>%
+  summarize(count = n()) %>%
+  ungroup()
+
+bike_thefts_month_y_rep<- bike_thefts_csv %>%
+  group_by(REPORT_MONTH, REPORT_YEAR) %>%
+  summarize(count = n()) %>%
+  ungroup()
+
+month_names <- c("January", "February", "March", "April", "May", "June", 
+                 "July", "August", "September", "October", "November", "December")
+bike_thefts_month_y_rep <- bike_thefts_month_y_rep %>%
+  mutate(REPORT_MONTH = factor(REPORT_MONTH, levels = month_names))
+
+bike_thefts_month_y_rep <- bike_thefts_month_y_rep %>%
+  mutate(REPORT_YEAR = factor(REPORT_YEAR, levels = year_range))
+
+
+################# Plotting the calendar heatmap #########################
+cal_plot <- ggplot(bike_thefts_month_y_rep, aes(x = REPORT_MONTH, y = REPORT_YEAR, fill = count)) +
+  geom_tile(aes(width = 0.9, height = 0.9), color = "white") +
+  scale_fill_gradient(low = "#F9FEF7", high = "darkgreen") +
+  labs(x = "Month", y = "Year", fill = "Count") +
+  theme_minimal() +
+  theme(
+   # plot.title = element_text(family = "Times New Roman", size = 16, hjust = 0.5),
+    panel.grid = element_blank(),
+    axis.text.y = element_text(angle = 0, hjust = 1, family = "Times New Roman", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, family = "Times New Roman", size = 12),
+    axis.ticks = element_blank()
+  )
+
+cal_plot
+```
+
+<span style="font-size:13px; color: grey;"> Data Source: Toronto Police Service Bicycle Thefts Open Data. </span>
+
+
+Toronto’s climate and cycling habits vary throughout the year, affecting both the number of cyclists on the road and the exposure of parked bikes to theft.Figure 2, a calendar heatmap of monthly bike theft counts from 2014 to 2024, reveals a clear seasonal pattern: thefts peak in the summer months of June, July, and August, with darker green tones showing the highest counts. In contrast, the winter months, especially December through February, show far fewer thefts.
+
+Why this seasonal spike? Warmer weather means more people cycling, leading to more bikes parked in public spaces, where they are more accessible to thieves. In winter, cycling declines as people turn to other forms of transportation, lowering both bike exposure and theft rates. This trend persists year after year, despite the overall decline in thefts since 2020, likely influenced by COVID-19 lockdowns and remote work. Even with fewer total thefts, summer remains a high-risk time.
+
+Knowing that theft risks rise with the temperature, cyclists can take extra precautions in summer, such as using stronger locks, parking in secure areas, and avoiding extended periods of outdoor parking.
+As we continue our analysis, new questions arise: Are certain areas of the city more prone to theft? Do specific bike types face higher risks? Understanding these factors could offer Toronto cyclists a more detailed map of the risks they face, helping them protect their bikes year-round.
+
+
+## Mapping the Risk – Geographic Hotspots for Bike Theft
+
+**Figure 3: Heatmap of Toronto's 158 Neighborhoods by Bike Thefts**
+```{r, echo=FALSE}
+########################## HEATMAP  ########################################
+#PREPARING THE DATA FOR THE HEATMAP 
+
+#Filtering where the stolen neighbourhood is unknown
+bike_thefts_sf <- bike_thefts_sf %>%
+  filter(!(LONG_WGS84 == 0 & LAT_WGS84 == 0))
+
+#Rounding the lat and long of the data 
+bike_thefts_neighborhood <- bike_thefts_sf %>%
+  mutate(LONG_WGS84 = round(LONG_WGS84, 5),  # Rounding to 1 decimal places
+         LAT_WGS84 = round(LAT_WGS84, 5)) %>%
+  group_by(HOOD_158, LONG_WGS84, LAT_WGS84) %>%
+  summarize(count = n()) %>%
+  ungroup()
+
+#Renaming the variable containing the neighbourhoods
+bike_thefts_neighborhood <- bike_thefts_neighborhood %>%
+  rename(AREA_LO6 = HOOD_158)
+
+#Aggregating the neighborhood counts
+bike_thefts_neighborhood <- bike_thefts_neighborhood %>% 
+  filter(AREA_LO6 != "NSA") %>% 
+  group_by(AREA_LO6) %>%  
+  summarize(count = sum(count, na.rm = FALSE)) %>%
+  ungroup()
+
+# Join the data with the spatial dataset
+add_count_column <- function(sf_data, bike_thefts) {
+  # Extract geometry
+  geom <- st_geometry(sf_data)
+  
+  # Drop geometry temporarily and perform the join
+  sf_data_no_geom <- sf_data %>%
+    st_set_geometry(NULL) %>%  # Remove geometry temporarily
+    left_join(bike_thefts %>% select(AREA_LO6, count), by = "AREA_LO6")
+  
+  # Reattach the geometry
+  sf_data_with_count <- st_as_sf(sf_data_no_geom, geometry = geom)
+  
+  return(sf_data_with_count)
+}
+
+neighborhood_data <- add_count_column(neighbourhoods_sf, bike_thefts_neighborhood)
+
+##########################################################################
+
+## PLOTTING THE HEATMAP FOR THE COUNT OF THEFT BY NEIGHBORHOOD
+
+# Remove single quotes from the NEIGHBOURHOOD_158 attribute
+neighborhood_data$AREA_DE8 <- gsub("'", "", neighborhood_data$AREA_DE8)
+
+#more options for the color option was viridis, cividis, inferno(hues of red,yell)
+p_map <- ggplot(neighborhood_data) +
+  geom_sf_interactive(aes(fill = count,
+                          tooltip = paste("Neighborhood:", AREA_DE8,
+                                          "<br>Count:", count),
+                          data_id = AREA_DE8)) +
+ scale_fill_distiller(palette = "YlGnBu", direction = 1, na.value = "grey90") +
+  labs(#title = "Hotspots of Bike Theft in Toronto",
+       fill = "Number of Thefts") +
+  theme_minimal() + 
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Render the interactive map
+# css allows u to customize the hover colors, borders etc
+interactive_map <- girafe(ggobj = p_map,
+                          options = list(
+                            opts_hover(css = "fill:green;stroke:black;stroke-width:1.5px;cursor:pointer;")
+                          ))
+
+interactive_map
+
+```
+<span style="font-size:13px; color: grey;"> Data Source: Toronto Police Service Bicycle Thefts Open Data. </span>
+
+
+In Toronto, some neighborhoods face higher bike theft rates than others. Figure 3, an interactive map of bike theft counts by neighborhood, highlights a clear concentration of thefts in the downtown core. The Yonge-Bay Corridor, in particular, stands out as the area with the highest reported incidents, followed by other busy downtown neighborhoods.
+
+This pattern is not surprising. Downtown areas have high foot traffic, numerous cycling routes, and a large number of bikes parked in public spaces daily. The interactive nature of the map lets readers explore specific neighborhoods, revealing theft counts for each area. For instance, South Riverdale, another active cycling hub, also experiences elevated theft rates, illustrating the link between bike traffic and theft risk.
+The color gradient—from light yellow to dark blue—emphasizes the contrast between high-risk and low-risk areas. Neighborhoods further from the downtown core generally see fewer thefts, likely due to lower population density and reduced bike exposure.
+
+For Toronto cyclists, this map is both a warning and a guide. Recognizing high-risk areas can help cyclists make safer parking choices, such as opting for indoor or secured bike storage in these hotspots. With this geographic insight, cyclists can reduce the likelihood of theft by adapting their habits based on location.
+
+Next, we examine whether specific bike types are more frequently targeted, offering further guidance on how to protect against theft.
+
+
+## What makes a bike stealable? Influence of bike attributes. 
+
+The trends in bike theft from 2014 to 2024 reveal surprising insights about which bike attributes including speed and price make certain models more likely to attract thieves. 
+
+**Figure 4: Number of Bike Thefts By Speed Category** 
+```{r}
+bike_data <- bike_thefts_csv
+bike_data$speed_category <- cut(
+  bike_data$BIKE_SPEED,
+  breaks = c(-Inf, 5, 10, 15, 20, 25, Inf),
+  labels = c("Very Slow", "Slow", "Moderate", "Fast", "Very Fast", "Extremely Fast"),
+  right = FALSE
+)
+
+speed_plot <- bike_data %>%
+  group_by(speed_category, REPORT_YEAR) %>%
+  summarise(n = n())
+speed_plot <- na.omit(speed_plot)
+
+speed_plot <- speed_plot %>%
+  group_by(REPORT_YEAR) %>%                               # Group by year
+  mutate(
+    total_thefts = sum(n),                                # Calculate total thefts for the year
+    ratio = n / total_thefts                              # Calculate ratio for each category
+  ) %>%
+  ungroup() %>%
+  select(-total_thefts)                                   # Optionally remove total_thefts column
+# Calculate the average bike thefts across all categories for each year
+average_thefts <- speed_plot %>%
+  group_by(REPORT_YEAR) %>%
+  summarise(avg_n = mean(n, na.rm = TRUE))
+
+# Create plotly plot
+speed_p <- plot_ly() %>%
+  # Add lines for each price category in shades of blue
+  add_lines(data = speed_plot, 
+            x = ~REPORT_YEAR, 
+            y = ~n, 
+            color = ~speed_category, 
+            colors = c("#4A90E2", "#5AAEF9", "#6EC1FA", "#8AD1FB", "#A6E1FC", "#C2F1FD"),  # Custom shades of blue for lines
+            text = ~paste("Category:", speed_category, "<br>Year:", REPORT_YEAR, "<br>Thefts:", n),
+            hoverinfo = "x+y+name", 
+            line = list(width = 2),
+            name = ~speed_category) %>%
+  # Add a line for the average in dark red
+  add_lines(data = average_thefts, 
+            x = ~REPORT_YEAR, 
+            y = ~round(avg_n,4),
+            name = "Average Thefts",
+            line = list(color = "#A52A2A", width = 3),  # Dark red color for the average line
+            text = ~paste("Average Bike Theft<br>Year:", REPORT_YEAR, "<br>Thefts:", round(avg_n, 4)),
+            hoverinfo = "x+y+name") %>%
+  # Customize layout with beige background, text styling, adjusted margins, and y-axis padding
+  layout(
+    #title = list(text = "Number of Bike Thefts by Speed Category", font = list(size = 20, color = "#333333")),
+    xaxis = list(title = list(text = "Year", font = list(size = 16, color = "#333333")),
+                 tickfont = list(size = 12, color = "#555555")),
+    yaxis = list(title = list(text = "Number of Bike Thefts", font = list(size = 16, color = "#333333")),
+                 tickfont = list(size = 12, color = "#555555"),
+                 range = c(0, max(speed_plot$n) * 1.1),  # Add 10% padding to the top of y-axis range
+                 automargin = TRUE),  # Automatically adjust margins for y-axis
+    legend = list(title = list(text = "<b>Speed Category</b>"), font = list(size = 14, color = "#333333")),
+    hovermode = "x unified",  # This keeps the tooltip visible across the x-axis
+    plot_bgcolor = "#ffffff",  # Beige background for the plot area
+    paper_bgcolor = "#ffffff",  # Beige background for the entire canvas
+    margin = list(t = 80, b = 60, l = 80, r = 60)  # Adjust top margin for the title and add space around the plot
+  )
+
+# Display plot
+speed_p
+```
+<span style="font-size:13px; color: grey;"> Data Source: Toronto Police Service Bicycle Thefts Open Data. </span>
+
+We first explore the bike thefts based on speed categories ranging from "Very Slow" to "Extremely Fast." Looking at thefts based on bike speed, an interesting pattern emerges. Bikes categorized as "Very Fast" are consistently the most stolen, with thefts peaking around 2020, followed by a steady decline through 2024. This top-tier line in the plot highlights the allure of high-speed bikes, likely reflecting their higher resale value or enhanced components, which may attract thieves seeking valuable parts. Similarly, "Very Slow" and "Slow" bikes consistently saw higher theft numbers, often surpassing the 500-theft mark per year. This could be due to the accessibility and prevalence of these bikes. Moreover, slower bikes are generally less expensive and easier to find parked in public spaces, making them prime targets for theft. The interactive chart allows you to show or hide specific speed categories, helping you explore bike theft trends in more detail (click on the speed categories on the legend!).
+
+We observe a substantial decline in 2021 indicated by average thefts likely due to the pandemic since, it brought significant lifestyle changes, including lockdowns, restrictions on movement, and a shift to remote work. These factors reduced the number of people commuting and using their bikes regularly, which could have led to fewer bikes left in public spaces and, consequently, fewer opportunities for theft.
+
+An apparent steep decline in theft numbers appears from 2023 to 2024, but this is actually due to incomplete data for 2024. With fewer months of data available, the numbers for 2024 seem artificially low, rather than indicating a dramatic drop in theft. The overall trend, however, remains consistent across years.
+
+
+## Brand and Value: Do pricier bikes face higher theft risks?
+
+**Figure 5: Number of Bike Thefts by Price Category**
+
+
+```{r}
+bike_data$price_category <- cut(
+  bike_data$BIKE_COST,
+  breaks = c(-Inf, 300, 800, 2000, Inf),
+  labels = c("Cheap", "Moderate", "Expensive", "Luxury"),
+  right = FALSE
+)
+price_plot <- bike_data %>%
+  group_by(price_category, REPORT_YEAR) %>%
+  summarise(n = n())
+price_plot <- na.omit(price_plot)
+
+price_plot <- price_plot %>%
+  group_by(REPORT_YEAR) %>%   # Group by year
+  mutate(
+    total_thefts = sum(n),    # Calculate total thefts for the year
+    ratio = n / total_thefts  # Calculate ratio for each category
+  ) %>%
+  ungroup() %>%
+  select(-total_thefts)      # Optionally remove total_thefts column
+
+# Calculate the average bike thefts across all categories for each year
+average_thefts <- price_plot %>%
+  group_by(REPORT_YEAR) %>%
+  summarise(avg_n = mean(n, na.rm = TRUE))
+
+# Create plotly plot
+price_p <- plot_ly() %>%
+  # Add lines for each price category in shades of blue
+  add_lines(data = price_plot, 
+            x = ~REPORT_YEAR, 
+            y = ~n, 
+            color = ~price_category, 
+            colors = c("#4A90E2", "#6EB1F7", "#A0CFFF"),  # Custom shades of blue for lines
+            text = ~paste("Category:", price_category, "<br>Year:", REPORT_YEAR, "<br>Thefts:", n),
+            hoverinfo = "x+y+name", 
+            line = list(width = 2),
+            name = ~price_category) %>%
+  # Add a line for the average in dark red
+  add_lines(data = average_thefts, 
+            x = ~REPORT_YEAR, 
+            y = ~avg_n,
+            name = "Average Thefts",
+            line = list(color = "#A52A2A", width = 3),  # Dark red color for the average line
+            text = ~paste("Average Bike Theft<br>Year:", REPORT_YEAR, "<br>Thefts:", round(avg_n, 2)),
+            hoverinfo = "x+y+name") %>%
+  # Customize layout with beige background, text styling, adjusted margins, and y-axis padding
+  layout(
+    #title = list(text = "Number of Bike Thefts by Price Category", font = list(size = 20, color = "#333333")),
+    xaxis = list(title = list(text = "Year", font = list(size = 16, color = "#333333")),
+                 tickfont = list(size = 12, color = "#555555")),
+    yaxis = list(title = list(text = "Number of Bike Thefts", font = list(size = 16, color = "#333333")),
+                 tickfont = list(size = 12, color = "#555555"),
+                 range = c(0, max(price_plot$n) * 1.1),  # Add 10% padding to the top of y-axis range
+                 automargin = TRUE),  # Automatically adjust margins for y-axis
+    legend = list(title = list(text = "<b>Price Category</b>"), font = list(size = 14, color = "#333333")),
+    hovermode = "x unified",  # This keeps the tooltip visible across the x-axis
+    plot_bgcolor = "#ffffff",  # Beige background for the plot area
+    paper_bgcolor = "#ffffff",  # Beige background for the entire canvas
+    margin = list(t = 80, b = 60, l = 80, r = 60)  # Adjust top margin for the title and add space around the plot
+  )
+
+# Display plot
+price_p
+```
+<span style="font-size:13px; color: grey;"> Data Source: Toronto Police Service Bicycle Thefts Open Data. </span>
+
+We now explore bike theft trends in Toronto, organized by bike price categories: Cheap (\$0–\$300), Moderate (\$300–\$800), Expensive (\$800–\$2000), and Luxury (over $2000). The red "Average Thefts" line serves as a reference for understanding how each category aligns with the overall theft trend.
+
+Expensive and moderate bikes are the most frequently stolen, with thefts peaking around 2017–2018 and are consistently above the average bike thefts for that period. This high rate is likely due to their availability where they are common in urban areas for everyday commuting, often left in public spaces with less security. Moderate priced and expensive bikes both follow closely along the average theft line, indicating they are also popular targets, possibly due to their good balance of value and quality, making them desirable but accessible. 
+
+Luxury bikes, valued over $2000, consistently show the lowest theft rates. This may be due to owners taking extra precautions, like secure storage or advanced locks, or simply because fewer luxury bikes are left in public spaces. Notably, post-2021, there’s a visible decline in bike thefts across all categories, suggesting that bike owners have become more cautious, using better locks and security measures. This data highlights that price is a key factor in theft risk: affordable and mid-range bikes are more frequently targeted, likely due to their accessibility and availability, whereas high-end bikes face less exposure and are more securely protected.
+
+## Conclusion
+
+All in all, bike theft remains a significant issue in Toronto, heavily influenced by seasonal patterns, urban density, and bike attributes like speed and price. Theft peaks in summer, especially in high-traffic downtown areas, and primarily targets affordable and mid-range bikes, which are more accessible and widely available. Post-2020, theft rates declined, partly due to pandemic-driven lifestyle shifts. Thus, cyclists must make informed security choices, especially in high-risk areas and peak seasons.
+
